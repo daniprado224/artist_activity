@@ -93,10 +93,24 @@ def _rate_limited_get(url: str, params: dict) -> requests.Response | None:
 
 
 def search_attraction(name: str) -> dict | None:
-    """Return the best attraction match for `name`, preferring Music classifications."""
+    """Return the best attraction match for `name`.
+
+    Prefers an exact (case-insensitive) name match over Ticketmaster's own
+    keyword-search ordering, and prefers a Music classification among
+    ties. Otherwise a tribute act, cover band, or themed night whose name
+    merely contains the query (observed in practice: "Fleetwood Mac
+    Tribute", "The Depeche Mode Experience", "Amy Winehouse Tribute")
+    routinely outranks the real artist in keyword search. This does not
+    fully solve the problem: an act with a name that IS an exact match
+    but is still not the real artist (e.g. "Mini Kiss" is not an exact
+    match to "Kiss" so it's unaffected either way; a hypothetical tribute
+    literally named identical to the original would still slip through),
+    or a real artist with no exact-name Ticketmaster listing at all, are
+    both untouched by this fix. See README known-limitations.
+    """
     response = _rate_limited_get(
         f"{TICKETMASTER_BASE_URL}/attractions.json",
-        params={"keyword": name, "apikey": API_KEY, "size": 10},
+        params={"keyword": name, "apikey": API_KEY, "size": 20},
     )
     if response is None:
         logger.error("attraction search failed for %r: exhausted retries", name)
@@ -118,6 +132,12 @@ def search_attraction(name: str) -> dict | None:
     def is_music(attraction: dict) -> bool:
         segments = [c.get("segment", {}).get("name") for c in attraction.get("classifications", [])]
         return "Music" in segments
+
+    normalized_query = name.strip().lower()
+    exact_matches = [a for a in attractions if a.get("name", "").strip().lower() == normalized_query]
+    if exact_matches:
+        music_exact = [a for a in exact_matches if is_music(a)]
+        return music_exact[0] if music_exact else exact_matches[0]
 
     music_matches = [a for a in attractions if is_music(a)]
     return music_matches[0] if music_matches else attractions[0]

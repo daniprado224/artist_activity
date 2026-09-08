@@ -101,10 +101,21 @@ def _rate_limited_get(url: str, params: dict) -> requests.Response | None:
 
 
 def search_artist(name: str) -> dict | None:
-    """Return the best-scoring MB artist search result for `name`, or None."""
+    """Return the best MB artist search result for `name`, or None.
+
+    Prefers an exact (case-insensitive) name match over MusicBrainz's own
+    relevance score. MB's scoring will otherwise happily rank an unrelated
+    artist whose name merely contains the query above the actual artist
+    (observed in practice: querying "Phoenix" scored "Nick Phoenix" above
+    the band Phoenix; querying "Kanye West" scored "Kanye West Tribute
+    Band" above the real Kanye West). This only helps when the correct
+    artist IS present among the results but wasn't top-scored -- if MB
+    has no exact-name entry at all, or the correct entry didn't make the
+    top `limit` results, this does nothing. See README known-limitations.
+    """
     response = _rate_limited_get(
         f"{MUSICBRAINZ_BASE_URL}/artist/",
-        params={"query": f'artist:"{name}"', "fmt": "json", "limit": 5},
+        params={"query": f'artist:"{name}"', "fmt": "json", "limit": 10},
     )
     if response is None:
         logger.error("search failed for %r: exhausted retries", name)
@@ -122,6 +133,11 @@ def search_artist(name: str) -> dict | None:
     if not artists:
         logger.warning("no MusicBrainz search results for %r", name)
         return None
+
+    normalized_query = name.strip().lower()
+    exact_matches = [a for a in artists if a.get("name", "").strip().lower() == normalized_query]
+    if exact_matches:
+        return max(exact_matches, key=lambda a: a.get("score", 0))
 
     return max(artists, key=lambda a: a.get("score", 0))
 
