@@ -115,11 +115,14 @@ docker-compose run --rm python python ingest_ticketmaster.py
 docker-compose run --rm python python resolve_entities.py
 docker-compose run --rm python python populate_events.py
 docker-compose run --rm python python validate.py
+docker-compose run --rm python python dashboard.py
 ```
 
 Each script is independently re-runnable (idempotent upserts on natural keys) -- re-running `ingest_musicbrainz.py` after a partial failure just re-fetches and updates, it does not duplicate rows. `populate_events.py` does not delete an `artists`/`events` row if its underlying `entity_resolution_map` confidence later drops below 90 on a re-run (e.g. after a matching-logic change) -- it only adds/updates, never removes. If that matters, wipe and rebuild (`docker-compose down -v`) rather than relying on incremental cleanup.
 
 `resolve_entities.py` writes every candidate match (exact and fuzzy) to `entity_resolution_map`, and separately writes matches scoring below the "safe" confidence threshold (90/100) to `output/manual_review_queue.csv` for a human to look at. **No automated match is ever written with `manually_verified = true`** -- that column is reserved for an actual human review step (there's a CHECK constraint enforcing that `manually_verified = true` requires `reviewed_at`/`reviewed_by` to be set, which this script never sets).
+
+`dashboard.py` queries the current `artists`/`events`/`entity_resolution_map` state and writes a self-contained `output/dashboard.html` -- open it directly in a browser (`open output/dashboard.html`). Five views: a bubble chart of catalog age (MusicBrainz `began_active_year`) vs. current touring activity (event count), sized by release count and colored by primary genre; events by genre; the most active touring artists; events over time; and the entity-resolution confidence distribution. It's a static snapshot, not a live view -- re-run it after re-ingesting to refresh. Colors follow a validated categorical palette (light/dark, CVD-checked); the bubble chart caps at three named genres plus "Other" since an all-pairs color comparison (every genre visible at once) can't stay colorblind-safe past three. No table-view fallback is built for any chart -- for a project this size, glancing at the underlying Postgres tables is the fallback.
 
 ### Verification status and actual results
 
