@@ -96,7 +96,7 @@ erDiagram
 
 Full DDL with rationale comments for every table/constraint: [`sql/001_schema.sql`](sql/001_schema.sql).
 
-Three schema decisions were made deliberately per your direction rather than picked silently:
+Three deliberate schema decisions worth calling out:
 
 1. **Genres are a shared M2M lookup table** (`genres` + `musicbrainz_source_genres`), not a flat array column. This keeps genre strings interned once and gives referential integrity, at the cost of joins and not fixing MusicBrainz's own tag-messiness (see Limitations).
 2. **Ticketmaster raw data is split into an attraction table + a child events table** (`artist_ticketmaster_source` + `ticketmaster_source_events`), matching the real 1-attraction-to-many-events shape of the API, instead of one wide row with array columns.

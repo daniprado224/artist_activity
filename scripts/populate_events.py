@@ -1,30 +1,3 @@
-"""Phase 2, step 1: promote trustworthy entity_resolution_map rows into the
-canonical artists/events tables.
-
-A resolution row is "trustworthy enough to promote" if match_confidence >=
-PROMOTION_THRESHOLD -- the same 90/100 cutoff resolve_entities.py already
-uses to decide what needs manual review. In practice this means anything
-already sitting in output/manual_review_queue.csv is correctly excluded,
-not a gap: those rows were reviewed and are known-wrong tribute-act
-matches, not borderline-but-probably-fine ones.
-
-For each promoted row:
-  1. Upsert an `artists` row keyed on mbid (canonical_name taken from the
-     MusicBrainz name, since that's the artist's real/legal name rather
-     than however Ticketmaster happens to list them).
-  2. Upsert one `events` row per ticketmaster_source_events row for that
-     attraction, tagged with the artist's single highest-tag-count genre
-     (or NULL if the artist has no tags) -- see the schema's genre design
-     note: events.genre_id is one canonical genre per event, not the full
-     MusicBrainz M2M tag set.
-
-Idempotent: artists is upserted on the mbid UNIQUE constraint; events is
-upserted on the source_tm_event_id UNIQUE constraint. Re-running this
-script after new ingestion/resolution data updates existing rows in
-place rather than duplicating them. It does NOT delete an artists/events
-row whose resolution_map entry later drops below threshold -- see README
-known-limitations.
-"""
 import logging
 import sys
 
@@ -71,7 +44,6 @@ def upsert_artist(cur, mbid: str, tm_attraction_id: str, canonical_name: str) ->
 
 
 def primary_genre_id(cur, mbid: str) -> int | None:
-    """The artist's single highest-tag-count genre, or None if untagged."""
     cur.execute(
         """
         SELECT genre_id FROM musicbrainz_source_genres
@@ -156,7 +128,7 @@ def main() -> int:
                 "promoted %r -> artist_id=%d (%d events, confidence=%.2f)",
                 match["mb_name"], artist_id, event_count, match["match_confidence"],
             )
-        except Exception as exc:  # noqa: BLE001 -- one bad row must not kill the batch
+        except Exception as exc:  # noqa: BLE001
             conn.rollback()
             logger.error("unexpected error promoting %r: %s", match["mb_name"], exc)
             failed.append(match["mb_name"])

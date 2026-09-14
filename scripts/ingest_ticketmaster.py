@@ -1,27 +1,3 @@
-"""Ingest raw attraction + event data from the Ticketmaster Discovery API.
-
-For each seed name:
-  1. GET /discovery/v2/attractions.json?keyword=... to find the best
-     attraction match (classification "Music" preferred when the API
-     returns a mix).
-  2. GET /discovery/v2/events.json?attractionId=...&size=200 to pull
-     that attraction's events (one page only -- see README limitations
-     on artists with more than one page of events).
-  3. Upsert into artist_ticketmaster_source and ticketmaster_source_events.
-
-Rate limiting: Ticketmaster's documented default is 5 requests/second per
-API key. We enforce a minimum gap of MIN_REQUEST_INTERVAL_SECONDS between
-every HTTP call and back off with increasing delay on HTTP 429 (rate
-limited) or any 5xx, up to MAX_RETRIES attempts.
-
-A failure on one artist is logged with the artist name and HTTP status
-and the script continues to the next artist -- one bad response never
-aborts the batch.
-
-Idempotent: tm_attraction_id / tm_event_id are primary keys, so
-INSERT ... ON CONFLICT DO UPDATE means re-running this script updates
-existing rows instead of duplicating them.
-"""
 import logging
 import os
 import sys
@@ -54,7 +30,6 @@ _last_request_time = 0.0
 
 
 def _rate_limited_get(url: str, params: dict) -> requests.Response | None:
-    """GET with the shared 5 req/sec pacing and 429/5xx backoff/retry."""
     global _last_request_time
 
     backoff = INITIAL_BACKOFF_SECONDS
@@ -94,21 +69,6 @@ def _rate_limited_get(url: str, params: dict) -> requests.Response | None:
 
 
 def search_attraction(name: str) -> dict | None:
-    """Return the best attraction match for `name`.
-
-    Prefers an exact (case-insensitive) name match over Ticketmaster's own
-    keyword-search ordering, and prefers a Music classification among
-    ties. Otherwise a tribute act, cover band, or themed night whose name
-    merely contains the query (observed in practice: "Fleetwood Mac
-    Tribute", "The Depeche Mode Experience", "Amy Winehouse Tribute")
-    routinely outranks the real artist in keyword search. This does not
-    fully solve the problem: an act with a name that IS an exact match
-    but is still not the real artist (e.g. "Mini Kiss" is not an exact
-    match to "Kiss" so it's unaffected either way; a hypothetical tribute
-    literally named identical to the original would still slip through),
-    or a real artist with no exact-name Ticketmaster listing at all, are
-    both untouched by this fix. See README known-limitations.
-    """
     response = _rate_limited_get(
         f"{TICKETMASTER_BASE_URL}/attractions.json",
         params={"keyword": name, "apikey": API_KEY, "size": 20},
@@ -134,6 +94,8 @@ def search_attraction(name: str) -> dict | None:
         segments = [c.get("segment", {}).get("name") for c in attraction.get("classifications", [])]
         return "Music" in segments
 
+    # prefer an exact match over keyword-search ranking -- otherwise a
+    # tribute act/cover band routinely outranks the real artist
     normalized_query = normalize_for_matching(name)
     exact_matches = [a for a in attractions if normalize_for_matching(a.get("name", "")) == normalized_query]
     if exact_matches:
@@ -145,7 +107,6 @@ def search_attraction(name: str) -> dict | None:
 
 
 def fetch_events(attraction_id: str, seed_name: str) -> list[dict]:
-    """Fetch up to one page (200) of events for an attraction. See README for pagination limitation."""
     response = _rate_limited_get(
         f"{TICKETMASTER_BASE_URL}/events.json",
         params={"attractionId": attraction_id, "apikey": API_KEY, "size": 200},
@@ -287,7 +248,7 @@ def main() -> int:
                 seed_name, attraction["id"], attraction.get("name"), len(events),
             )
 
-        except Exception as exc:  # noqa: BLE001 -- one bad artist must not kill the batch
+        except Exception as exc:  # noqa: BLE001
             conn.rollback()
             logger.error("unexpected error ingesting %r: %s", seed_name, exc)
             failed.append(seed_name)

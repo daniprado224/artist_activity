@@ -1,30 +1,3 @@
-"""Resolve MusicBrainz artists to Ticketmaster attractions by name.
-
-Algorithm, per MusicBrainz artist:
-  1. Exact match: normalized (trimmed, lowercased, punctuation-stripped)
-     name equality against all Ticketmaster attraction names. If found,
-     recorded with match_confidence = 100.00, match_method = 'exact_name'.
-  2. Otherwise, fuzzy match: rapidfuzz.fuzz.token_sort_ratio against every
-     Ticketmaster attraction name, taking the highest-scoring candidate.
-     Recorded with match_method = 'fuzzy_token_sort_ratio' and
-     match_confidence = that score, IF the score clears
-     MIN_CANDIDATE_THRESHOLD -- scores below that aren't even noise-level
-     candidates and are not written at all.
-
-Every match that IS written (exact or fuzzy) gets manually_verified =
-false -- an automated score, however high, is not a human verifying the
-match, and the schema's CHECK constraint enforces that distinction
-(manually_verified = true requires reviewed_at/reviewed_by to be set,
-which nothing in this script ever does).
-
-Matches scoring below SAFE_CONFIDENCE_THRESHOLD are exported to
-output/manual_review_queue.csv. This script does NOT write to `artists`
-or `events` -- turning a resolution_map row into a canonical artist (and
-copying its events) is a Phase 2 pipeline decision, out of scope here.
-
-Idempotent: UNIQUE (mbid, tm_attraction_id) means re-running this script
-updates an existing candidate row's score/method instead of duplicating it.
-"""
 import csv
 import logging
 import os
@@ -52,12 +25,6 @@ _PUNCTUATION_RE = re.compile(r"[^\w\s]")
 
 
 def normalize_name(name: str) -> str:
-    """Fold accents/"&", then strip remaining punctuation, collapse whitespace.
-
-    This is intentionally shallow: it does NOT expand abbreviations or
-    know about stage-name aliases (e.g. "Kanye West" vs "Ye"). See README
-    known-limitations for what this misses.
-    """
     folded = normalize_for_matching(name)
     no_punct = _PUNCTUATION_RE.sub("", folded)
     return re.sub(r"\s+", " ", no_punct).strip()
@@ -74,7 +41,6 @@ def load_tm_attractions(cur) -> list[dict]:
 
 
 def find_match(mb_name: str, tm_attractions: list[dict]) -> tuple[dict | None, float, str]:
-    """Return (best_tm_attraction_or_None, confidence, method) for one MB artist."""
     normalized_mb = normalize_name(mb_name)
 
     exact_candidates = [a for a in tm_attractions if normalize_name(a["name"]) == normalized_mb]
@@ -166,7 +132,7 @@ def main() -> int:
                     }
                 )
 
-        except Exception as exc:  # noqa: BLE001 -- one bad pair must not kill the batch
+        except Exception as exc:  # noqa: BLE001
             conn.rollback()
             logger.error("unexpected error resolving %r: %s", mb_artist["name"], exc)
 

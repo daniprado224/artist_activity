@@ -1,24 +1,3 @@
-"""Validation / QA report for the Phase 1 data layer.
-
-Two things, printed to stdout (nothing is written back to the database):
-
-1. A random sample of up to 20 entity_resolution_map rows, printed
-   side-by-side: MusicBrainz name/genres vs. Ticketmaster name/venue,
-   plus the match confidence/method, for manual spot-checking.
-
-2. A QA report:
-   - row counts for every table
-   - null rates per column for the two raw source tables (the columns
-     that actually matter for downstream analysis -- not every JSONB blob)
-   - how many seed-list artists failed to resolve on the MusicBrainz
-     side, the Ticketmaster side, or both, using the seed_name columns
-     ingestion writes for exactly this purpose
-   - how many seed-list artists that DID ingest on both sides still
-     have no entity_resolution_map row linking their own MBID to their
-     own TM attraction ID (i.e. resolve_entities.py either found no
-     candidate for them, or its best fuzzy match landed on a different
-     attraction than the one ingested for the same seed name)
-"""
 import json as jsonlib
 import os
 import random
@@ -60,7 +39,7 @@ def print_header(title: str) -> None:
 def report_row_counts(cur) -> None:
     print_header("ROW COUNTS")
     for table in TABLES:
-        cur.execute(f"SELECT count(*) FROM {table}")  # noqa: S608 -- TABLES is a fixed local list, not user input
+        cur.execute(f"SELECT count(*) FROM {table}")  # noqa: S608
         print(f"  {table:<32} {cur.fetchone()[0]}")
 
 
