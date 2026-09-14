@@ -1,9 +1,24 @@
-# Artist Activity: Catalog vs. Touring Data Layer (Phase 1)
+# Artist Activity: Catalog vs. Touring Data Layer
 
-Phase 1 scope only: **ingestion, storage, and entity resolution** for
-comparing an artist's recorded catalog (MusicBrainz) against their live
-touring activity (Ticketmaster Discovery API). No pipeline orchestration,
-no RAG/agent layer, no dashboard yet -- those are later phases.
+## What this answers
+
+Is there any relationship between how established an artist's recorded catalog is and how actively they're currently touring? This project builds the data layer to actually look at that, for a real (if small) set of ~50 artists spanning six decades and a dozen genres, by combining:
+
+- **MusicBrainz** -- their recorded catalog: when they started, how many releases, what genres they're tagged with.
+- **Ticketmaster** -- their live touring activity: how many scheduled shows, where, and (when Ticketmaster publishes it) at what price.
+
+The hard part isn't fetching the data -- it's that MusicBrainz and Ticketmaster have no shared ID for "the same artist." A large share of the actual engineering here is entity resolution: matching a MusicBrainz artist to the right Ticketmaster attraction by name, while correctly rejecting the tribute bands, cover acts, and unrelated artists that keyword search keeps surfacing instead.
+
+## What it actually does
+
+1. **Ingests** both APIs for the seed list (`ingest_musicbrainz.py`, `ingest_ticketmaster.py`) into raw source tables.
+2. **Resolves** each MusicBrainz artist to a Ticketmaster attraction by name -- exact match first, fuzzy match as a fallback, every candidate logged with a confidence score (`resolve_entities.py`).
+3. **Promotes** the confident matches (>=90/100 confidence) into a clean, normalized `artists`/`events` dataset (`populate_events.py`) -- anything less confident is held out and written to a CSV for manual review instead of silently polluting the results.
+4. **Visualizes** the result: a local dashboard (`dashboard.py` -> `output/dashboard.html`) plotting catalog age against current touring activity, genre breakdown, the most active touring artists, an events timeline, and how confident the entity resolution actually was.
+
+## The actual result
+
+On the real seed list, 47 of 51 artists (92%) resolve correctly end-to-end. The 4 that don't are documented, not hidden -- see "Verification status and actual results" below for exactly which ones and why. This is a real, if small, dataset: 51 artists is nowhere near enough to draw a statistically meaningful conclusion about catalog age vs. touring activity, and this project was never meant to settle that question -- it's a data layer that makes the question askable, not a study that answers it.
 
 ## Schema
 
@@ -102,21 +117,45 @@ Three deliberate schema decisions worth calling out:
 2. **Ticketmaster raw data is split into an attraction table + a child events table** (`artist_ticketmaster_source` + `ticketmaster_source_events`), matching the real 1-attraction-to-many-events shape of the API, instead of one wide row with array columns.
 3. **MusicBrainz life-span dates are stored as separate nullable year/month/day columns plus a raw string**, not padded into a single `DATE`, so "formed in 1990" is never fabricated into a false claim of day-level precision.
 
-**Phase 2, step 1**: `scripts/populate_events.py` promotes `entity_resolution_map` rows scoring `match_confidence >= 90` into canonical `artists` rows and copies their `ticketmaster_source_events` into `events`, tagging each event with the artist's single highest-tag-count MusicBrainz genre. Rows below 90 (the same threshold used for the manual review CSV) are correctly left unpromoted -- see "Verification status" above for why that's the right outcome, not a gap. This does not attempt full pipeline orchestration (scheduling, incremental re-ingestion, retries across runs) -- see Known limitations.
+**Phase 2, step 1**: `scripts/populate_events.py` promotes `entity_resolution_map` rows scoring `match_confidence >= 90` into canonical `artists` rows and copies their `ticketmaster_source_events` into `events`, tagging each event with the artist's single highest-tag-count MusicBrainz genre. Rows below 90 (the same threshold used for the manual review CSV) are correctly left unpromoted -- see "Verification status and actual results" below for why that's the right outcome, not a gap. This does not attempt full pipeline orchestration (scheduling, incremental re-ingestion, retries across runs) -- see Known limitations.
 
-## Running it
+## Running it locally
+
+**Prerequisites:**
+- Docker Desktop (or Docker Engine + docker-compose) -- everything runs in containers, nothing needs to be installed on your host beyond Docker itself.
+- A free Ticketmaster API key: https://developer.ticketmaster.com/ (the free tier's rate limit is enough for this seed list).
+- Any real email address or project URL to use as MusicBrainz's required contact string -- see `.env.example`.
+
+**Setup:**
 
 ```bash
+git clone <this repo's URL>
+cd artist_activity
 cp .env.example .env
 # edit .env: set TICKETMASTER_API_KEY and a real MUSICBRAINZ_USER_AGENT contact
 docker-compose up -d postgres   # applies sql/001_schema.sql automatically on first run
+```
+
+**Run the pipeline, in order:**
+
+```bash
 docker-compose run --rm python python ingest_musicbrainz.py
 docker-compose run --rm python python ingest_ticketmaster.py
 docker-compose run --rm python python resolve_entities.py
 docker-compose run --rm python python populate_events.py
 docker-compose run --rm python python validate.py
 docker-compose run --rm python python dashboard.py
+open output/dashboard.html   # macOS -- use `xdg-open` on Linux, `start` on Windows
 ```
+
+The two ingestion scripts take a few minutes each (MusicBrainz enforces 1 request/second, and its API has shown itself to be flaky under load -- see below). Everything after ingestion runs in seconds, since it's all local to your own Postgres instance and touches no external API.
+
+**To look at the raw tables directly**, instead of or in addition to the dashboard:
+
+```bash
+psql -h localhost -U artist_activity -d artist_activity
+```
+(password is whatever you set as `POSTGRES_PASSWORD` in `.env` -- `.env.example`'s default is `change_me`, so change it)
 
 Each script is independently re-runnable (idempotent upserts on natural keys) -- re-running `ingest_musicbrainz.py` after a partial failure just re-fetches and updates, it does not duplicate rows. `populate_events.py` does not delete an `artists`/`events` row if its underlying `entity_resolution_map` confidence later drops below 90 on a re-run (e.g. after a matching-logic change) -- it only adds/updates, never removes. If that matters, wipe and rebuild (`docker-compose down -v`) rather than relying on incremental cleanup.
 
