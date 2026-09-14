@@ -210,11 +210,30 @@ PAGE_TEMPLATE = """<!doctype html>
   .chart-card h2 { font-size: 14px; margin: 0 0 2px; }
   .chart-card .caption { font-size: 12px; color: var(--text-secondary); margin: 0 0 12px; }
   .chart-card canvas { max-height: 320px; }
+  .synopsis {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+  }
+  .synopsis h2 { font-size: 15px; margin: 0 0 8px; }
+  .synopsis p { font-size: 13px; color: var(--text-secondary); margin: 0 0 8px; line-height: 1.5; }
+  .synopsis p:last-child { margin-bottom: 0; }
+  .synopsis strong { color: var(--text-primary); }
+  .synopsis .caveat { font-size: 12px; color: var(--text-muted); font-style: italic; }
 </style>
 </head>
 <body>
   <h1>Artist Activity Dashboard</h1>
   <p class="subtitle">Generated from the local Postgres instance -- run scripts/dashboard.py again after re-ingesting to refresh.</p>
+
+  <div class="synopsis">
+    <h2>What this answers</h2>
+    <p>Is there any relationship between how established an artist's recorded catalog is and how actively they're currently touring? This combines <strong>MusicBrainz</strong> (recorded catalog -- when they started, how many releases, genre tags) with <strong>Ticketmaster</strong> (live touring activity -- scheduled shows, venues, pricing) for the same real-world artists, matched across both sources by name.</p>
+    <p><strong>__ARTIST_COUNT__ of __SEED_TOTAL__ seed artists (__RESOLVED_PCT__%)</strong> resolved correctly end-to-end; the charts below are built only from those confidently-matched artists, not the full seed list.</p>
+    <p class="caveat">__SEED_TOTAL__ artists is a small, exploratory sample -- enough to make the question askable and to spot-check individual cases, not enough to draw a statistically meaningful conclusion about catalog age vs. touring activity in general.</p>
+  </div>
 
   <div class="kpi-row">
     <div class="kpi-tile">
@@ -378,8 +397,10 @@ def render(kpis, bubble_rows, top_genres, genre_events, top_artists, timeline, c
     html = PAGE_TEMPLATE
     html = html.replace("__CHARTJS_SOURCE__", chartjs_source)
     html = html.replace("__DATA_JSON__", jsonlib.dumps(data))
+    resolved_pct = round(100 * kpis["artist_count"] / kpis["seed_total"]) if kpis["seed_total"] else 0
     html = html.replace("__ARTIST_COUNT__", str(kpis["artist_count"]))
     html = html.replace("__SEED_TOTAL__", str(kpis["seed_total"]))
+    html = html.replace("__RESOLVED_PCT__", str(resolved_pct))
     html = html.replace("__EVENT_COUNT__", str(kpis["event_count"]))
     html = html.replace("__GENRE_COUNT__", str(kpis["genre_count"]))
     html = html.replace("__TOP_GENRES_LIMIT__", str(TOP_GENRES_LIMIT))
