@@ -8,6 +8,7 @@ from db import get_connection
 SEED_FILE = os.path.join(os.path.dirname(__file__), "..", "seed", "seed_artists.json")
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "output")
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "dashboard.html")
+CHARTJS_PATH = os.path.join(os.path.dirname(__file__), "vendor", "chart.umd.js")
 
 TOP_GENRE_SLOTS = 3  # scatter/bubble color caps at 3 distinct hues before folding to "Other"
 TOP_ARTISTS_LIMIT = 15
@@ -258,7 +259,7 @@ PAGE_TEMPLATE = """<!doctype html>
     </div>
   </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script>__CHARTJS_SOURCE__</script>
 <script>
 const DATA = __DATA_JSON__;
 
@@ -371,7 +372,11 @@ def render(kpis, bubble_rows, top_genres, genre_events, top_artists, timeline, c
         "timeline": timeline,
         "confidence": confidence,
     }
+    with open(CHARTJS_PATH, "r", encoding="utf-8") as f:
+        chartjs_source = f.read()
+
     html = PAGE_TEMPLATE
+    html = html.replace("__CHARTJS_SOURCE__", chartjs_source)
     html = html.replace("__DATA_JSON__", jsonlib.dumps(data))
     html = html.replace("__ARTIST_COUNT__", str(kpis["artist_count"]))
     html = html.replace("__SEED_TOTAL__", str(kpis["seed_total"]))
