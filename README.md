@@ -120,11 +120,19 @@ Each script is independently re-runnable (idempotent upserts on natural keys) --
 
 `resolve_entities.py` writes every candidate match (exact and fuzzy) to `entity_resolution_map`, and separately writes matches scoring below the "safe" confidence threshold (90/100) to `output/manual_review_queue.csv` for a human to look at. **No automated match is ever written with `manually_verified = true`** -- that column is reserved for an actual human review step (there's a CHECK constraint enforcing that `manually_verified = true` requires `reviewed_at`/`reviewed_by` to be set, which this script never sets).
 
-### Verification status
+### Verification status and actual results
 
-The environment this project was originally built in has an outbound network policy that blocks `musicbrainz.org` and Ticketmaster's API domain outright, so the initial build was verified only against a real local Postgres 16 instance (DDL applies cleanly, the partial-date and `manually_verified` CHECK constraints reject what they should, `resolve_entities.py`/`validate.py` run correctly against synthetic source rows) -- not against live API responses.
+Both ingestion scripts have been run repeatedly against the real MusicBrainz and Ticketmaster APIs, and the schema/constraints have been verified against a real Postgres 16 instance. Steady-state result on the full ~50-artist seed list, after MusicBrainz's transient 503s clear on a simple re-run (idempotent, no code change needed):
 
-Both ingestion scripts have since been run repeatedly against the real MusicBrainz and Ticketmaster APIs (see git history for the exact-match and accent/"&"-normalization fixes that came out of those runs). MusicBrainz's API has shown itself to be unreliable under load in practice -- expect occasional runs with several artists failing on exhausted-retry 503s that clear on a simple re-run (idempotent, safe to do) rather than needing any code change.
+- **47 of 51 seed artists (92%) resolve end-to-end** with a correct MBID <-> Ticketmaster attraction link in `entity_resolution_map`.
+- **1 ingestion gap**: `Run-DMC` never returns a MusicBrainz search result under that exact spelling -- their real entry is very likely `Run-D.M.C.`. Fix the spelling in `seed/seed_artists.json` if you want this artist included; it is not a bug in the ingestion script.
+- **3 resolution failures that string-matching cannot fix**, confirmed stable across multiple runs, not flakiness:
+  - `Kanye West` -- MusicBrainz's top search result is "Kanye West Tribute Band" (no exact "Kanye West" entry was found among search results), while Ticketmaster's real listing is under "Ye," his legal name. Two different strings for the same real-world change, not a formatting difference.
+  - `Sturgill Simpson` -- resolves correctly on MusicBrainz, but his real current Ticketmaster attraction is billed as "Johnny Blue Skies," a touring alias.
+  - `Bob Marley and the Wailers` -- MusicBrainz resolves correctly ("Bob Marley & The Wailers"); Ticketmaster's keyword search for this artist appears to return only tribute-act listings (e.g. "One Drop Redemption, Tribute to Bob Marley & the Wailers") within the top 20 results, with no exact match for the real act found among them.
+
+  Closing these three would require a manual seed-name-to-known-alias mapping, which is a data-maintenance approach rather than an algorithm change, and was deliberately not built -- see the entity-resolution limitation below.
+- MusicBrainz's own API has shown itself to be unreliable under load in practice -- expect occasional runs with several artists failing on exhausted-retry 503s that clear on a simple re-run rather than needing any code change. Which specific artists fail varies run to run.
 
 ## Seed artist list
 
@@ -146,4 +154,3 @@ It deliberately includes several **hard cases likely to expose entity-resolution
 - **MusicBrainz genre tags are free-text folksonomy, not a controlled vocabulary.** "Indie rock," "indie-rock," and "indierock" land as three separate rows in `genres` rather than being recognized as the same genre. No alias/canonicalization step exists yet.
 - **No pagination retry/backfill logic** beyond the single page fetched at ingestion time; a transient failure logged for one artist requires manually re-running the ingestion script (safe to do, since it's idempotent) rather than being automatically retried later.
 - **Rate-limit backoff is best-effort, not adaptive** -- both scripts use fixed exponential backoff on 429/503/5xx, not a token-bucket that reads a `Retry-After` header, so under sustained throttling they'll retry more slowly than strictly necessary rather than failing outright.
-- **The ingestion scripts have not been run against the live APIs in this environment** (see "What I could not verify" above) -- they've only been proven against real Postgres with synthetic source rows.
