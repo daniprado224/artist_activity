@@ -102,7 +102,7 @@ Three schema decisions were made deliberately per your direction rather than pic
 2. **Ticketmaster raw data is split into an attraction table + a child events table** (`artist_ticketmaster_source` + `ticketmaster_source_events`), matching the real 1-attraction-to-many-events shape of the API, instead of one wide row with array columns.
 3. **MusicBrainz life-span dates are stored as separate nullable year/month/day columns plus a raw string**, not padded into a single `DATE`, so "formed in 1990" is never fabricated into a false claim of day-level precision.
 
-`artists` and `events` are **not populated by any script in this phase**. Turning an `entity_resolution_map` row into a canonical `artists` row (and copying its `ticketmaster_source_events` into `events`) is a Phase 2 pipeline decision -- deliberately out of scope here, per "do NOT build pipeline orchestration yet."
+**Phase 2, step 1**: `scripts/populate_events.py` promotes `entity_resolution_map` rows scoring `match_confidence >= 90` into canonical `artists` rows and copies their `ticketmaster_source_events` into `events`, tagging each event with the artist's single highest-tag-count MusicBrainz genre. Rows below 90 (the same threshold used for the manual review CSV) are correctly left unpromoted -- see "Verification status" above for why that's the right outcome, not a gap. This does not attempt full pipeline orchestration (scheduling, incremental re-ingestion, retries across runs) -- see Known limitations.
 
 ## Running it
 
@@ -113,10 +113,11 @@ docker-compose up -d postgres   # applies sql/001_schema.sql automatically on fi
 docker-compose run --rm python python ingest_musicbrainz.py
 docker-compose run --rm python python ingest_ticketmaster.py
 docker-compose run --rm python python resolve_entities.py
+docker-compose run --rm python python populate_events.py
 docker-compose run --rm python python validate.py
 ```
 
-Each script is independently re-runnable (idempotent upserts on natural keys) -- re-running `ingest_musicbrainz.py` after a partial failure just re-fetches and updates, it does not duplicate rows.
+Each script is independently re-runnable (idempotent upserts on natural keys) -- re-running `ingest_musicbrainz.py` after a partial failure just re-fetches and updates, it does not duplicate rows. `populate_events.py` does not delete an `artists`/`events` row if its underlying `entity_resolution_map` confidence later drops below 90 on a re-run (e.g. after a matching-logic change) -- it only adds/updates, never removes. If that matters, wipe and rebuild (`docker-compose down -v`) rather than relying on incremental cleanup.
 
 `resolve_entities.py` writes every candidate match (exact and fuzzy) to `entity_resolution_map`, and separately writes matches scoring below the "safe" confidence threshold (90/100) to `output/manual_review_queue.csv` for a human to look at. **No automated match is ever written with `manually_verified = true`** -- that column is reserved for an actual human review step (there's a CHECK constraint enforcing that `manually_verified = true` requires `reviewed_at`/`reviewed_by` to be set, which this script never sets).
 
