@@ -30,6 +30,7 @@ from dotenv import load_dotenv
 import json as jsonlib
 
 from db import get_connection, get_or_create_genre_id
+from matching import normalize_for_matching
 
 load_dotenv()
 
@@ -134,8 +135,8 @@ def search_artist(name: str) -> dict | None:
         logger.warning("no MusicBrainz search results for %r", name)
         return None
 
-    normalized_query = name.strip().lower()
-    exact_matches = [a for a in artists if a.get("name", "").strip().lower() == normalized_query]
+    normalized_query = normalize_for_matching(name)
+    exact_matches = [a for a in artists if normalize_for_matching(a.get("name", "")) == normalized_query]
     if exact_matches:
         return max(exact_matches, key=lambda a: a.get("score", 0))
 

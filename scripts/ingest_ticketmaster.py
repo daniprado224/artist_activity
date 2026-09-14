@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 import json as jsonlib
 
 from db import get_connection
+from matching import normalize_for_matching
 
 load_dotenv()
 
@@ -133,8 +134,8 @@ def search_attraction(name: str) -> dict | None:
         segments = [c.get("segment", {}).get("name") for c in attraction.get("classifications", [])]
         return "Music" in segments
 
-    normalized_query = name.strip().lower()
-    exact_matches = [a for a in attractions if a.get("name", "").strip().lower() == normalized_query]
+    normalized_query = normalize_for_matching(name)
+    exact_matches = [a for a in attractions if normalize_for_matching(a.get("name", "")) == normalized_query]
     if exact_matches:
         music_exact = [a for a in exact_matches if is_music(a)]
         return music_exact[0] if music_exact else exact_matches[0]

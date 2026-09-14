@@ -34,6 +34,7 @@ import sys
 from rapidfuzz import fuzz
 
 from db import get_connection
+from matching import normalize_for_matching
 
 MIN_CANDIDATE_THRESHOLD = 60.0   # below this, don't even record a candidate
 SAFE_CONFIDENCE_THRESHOLD = 90.0  # below this, flag for manual review
@@ -51,14 +52,14 @@ _PUNCTUATION_RE = re.compile(r"[^\w\s]")
 
 
 def normalize_name(name: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace -- for comparison only.
+    """Fold accents/"&", then strip remaining punctuation, collapse whitespace.
 
-    This is intentionally shallow: it does NOT fold accents (e.g. 'Sigur
-    Rós' vs 'Sigur Ros' still differ under this normalization) or expand
-    abbreviations. See README known-limitations for what this misses.
+    This is intentionally shallow: it does NOT expand abbreviations or
+    know about stage-name aliases (e.g. "Kanye West" vs "Ye"). See README
+    known-limitations for what this misses.
     """
-    lowered = name.strip().lower()
-    no_punct = _PUNCTUATION_RE.sub("", lowered)
+    folded = normalize_for_matching(name)
+    no_punct = _PUNCTUATION_RE.sub("", folded)
     return re.sub(r"\s+", " ", no_punct).strip()
 
 
